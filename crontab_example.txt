@@ -1,0 +1,18 @@
+# CCTX-Ana 定时任务示例
+# 编辑你的crontab: crontab -e
+
+# 每小时获取BTC/USDT的1m数据
+0 * * * * cd /path/to/CCTX-Ana && python cron_task.py --symbol BTC/USDT --timeframe 1m --days 1
+
+# 每4小时获取BTC/USDT的5m数据
+0 */4 * * * cd /path/to/CCTX-Ana && python cron_task.py --symbol BTC/USDT --timeframe 5m --days 1
+
+# 每天凌晨2点获取BTC/USDT的所有时间周期数据
+0 2 * * * cd /path/to/CCTX-Ana && python cron_task.py --symbol BTC/USDT --days 7
+
+# 每周一凌晨3点获取ETH/USDT的所有时间周期数据
+0 3 * * 1 cd /path/to/CCTX-Ana && python cron_task.py --symbol ETH/USDT --days 30
+
+# 每月1日凌晨4点获取多个交易对的日线数据
+0 4 1 * * cd /path/to/CCTX-Ana && python cron_task.py --symbol BTC/USDT --timeframe 1d --days 90
+30 4 1 * * cd /path/to/CCTX-Ana && python cron_task.py --symbol ETH/USDT --timeframe 1d --days 90

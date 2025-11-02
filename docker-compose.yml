@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: cctx-ana-app
+    restart: unless-stopped
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./cache:/app/cache
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=cctxana
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+    depends_on:
+      - postgres
+    command: python cron_task.py --symbol BTC/USDT --days 1
+
+  postgres:
+    image: postgres:14
+    container_name: cctx-ana-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=cctxana
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
