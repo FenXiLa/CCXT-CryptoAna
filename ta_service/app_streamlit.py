@@ -4,6 +4,8 @@ import time
 import pathlib
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # 确保项目根目录在 sys.path 中，避免 ModuleNotFoundError: ta_service
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -113,15 +115,54 @@ SIGNAL_DESCRIPTIONS = {
 def main():
     st.set_page_config(page_title="CCTX-Ana 技术分析仪表盘", layout="wide")
 
-    # 全局样式：降低字体、减小内边距
+    # 全局样式：降低字体、调整内边距，确保标题不被遮挡
     st.markdown(
         """
         <style>
+        /* 基础字体大小 */
         html, body, [class*="css"] { font-size: 13px !important; }
-        .block-container { padding-top: 0.8rem; padding-bottom: 0.8rem; }
-        h1, h2, h3 { font-size: 1.15rem !important; }
+        
+        /* 确保标题区域有足够空间，不被顶部导航栏遮挡 */
+        .block-container { 
+            padding-top: 2rem !important; 
+            padding-bottom: 0.8rem !important; 
+        }
+        
+        /* 标题样式 */
+        h1 { 
+            font-size: 1.5rem !important; 
+            margin-top: 0.5rem !important;
+            margin-bottom: 1rem !important;
+            padding-top: 0 !important;
+        }
+        h2, h3 { 
+            font-size: 1.15rem !important; 
+            margin-top: 1rem !important;
+        }
+        
+        /* 指标卡片样式 */
         [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
         [data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
+        
+        /* 确保侧边栏不会遮挡主内容 */
+        [data-testid="stSidebar"] {
+            padding-top: 1rem;
+        }
+        
+        /* 隐藏 Streamlit 默认的顶部装饰和底部 */
+        #MainMenu { visibility: hidden; }
+        footer { visibility: hidden; }
+        header { visibility: hidden; }
+        
+        /* 确保主内容区域有足够的上边距 */
+        .main .block-container {
+            padding-top: 3rem !important;
+        }
+        
+        /* 标题容器样式 */
+        [data-testid="stAppViewContainer"] {
+            padding-top: 1rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -159,13 +200,57 @@ def main():
             st.error("获取数据为空")
             st.stop()
 
-    # 价格与成交量
+    # 价格与成交量（双Y轴图表）
     st.subheader("价格与成交量")
-    price_col, vol_col = st.columns([3, 1])
-    with price_col:
-        st.line_chart(df[['Close']].rename(columns={'Close': f'{symbol} Close'}), use_container_width=True)
-    with vol_col:
-        st.bar_chart(df[['Volume']].rename(columns={'Volume': 'Volume'}), use_container_width=True)
+    
+    # 创建双Y轴图表
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # 添加价格线（主Y轴）
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df['Close'],
+            name=f'{symbol} 价格',
+            line=dict(color='#1f77b4', width=1.5)
+        ),
+        secondary_y=False,
+    )
+    
+    # 添加成交量柱状图（次Y轴）- 涨跌用不同颜色
+    colors = []
+    for i in range(len(df)):
+        if i == 0:
+            colors.append('#2ca02c')  # 第一个数据点默认为绿色
+        elif df['Close'].iloc[i] >= df['Close'].iloc[i-1]:
+            colors.append('#2ca02c')  # 上涨为绿色
+        else:
+            colors.append('#d62728')  # 下跌为红色
+    fig.add_trace(
+        go.Bar(
+            x=df.index,
+            y=df['Volume'],
+            name='成交量',
+            marker_color=colors,
+            opacity=0.3
+        ),
+        secondary_y=True,
+    )
+    
+    # 设置Y轴标签
+    fig.update_yaxes(title_text=f"{symbol} 价格", secondary_y=False)
+    fig.update_yaxes(title_text="成交量", secondary_y=True)
+    
+    # 设置图表标题和布局
+    fig.update_layout(
+        title=f"{symbol} 价格与成交量",
+        xaxis_title="时间",
+        height=400,
+        hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
     # 计算指标与信号
     with st.spinner("计算指标与信号…"):
