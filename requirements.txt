@@ -33,3 +33,4 @@ jupyter
 ipykernel
 TA-Lib
 streamlit
+plotly
