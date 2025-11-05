@@ -1,0 +1,54 @@
+# CCTX-Ana 配置文件
+# 复制此文件为 config.yml 并修改为你的配置
+
+# 数据库配置
+database:
+  # 存储类型: csv 或 postgresql
+  type: postgresql
+  
+  # PostgreSQL 配置 (当 type 为 postgresql 时使用)
+  postgresql:
+    host: postgres
+    port: 5432
+    dbname: cctxana
+    user: postgres
+    password: postgres
+    
+# 数据获取配置
+data:
+  # 默认交易对
+  default_symbol: BTC/USDT
+  
+  # 要获取的时间周期列表
+  timeframes:
+    - 1h
+    - 4h
+    - 1d
+  
+  # 默认获取的历史数据天数
+  default_days: 30
+  
+  # 是否启用动态排序交易所功能
+  enable_dynamic_sorting: true
+  
+  # 是否启用数据补单功能
+  enable_data_filling: true
+
+# 定时任务配置
+cron:
+  # 是否启用定时任务
+  enabled: true
+  
+  # 定时任务列表
+  tasks:
+    # 每小时获取1小时数据
+    - symbol: BTC/USDT
+      timeframe: 1h
+      days: 1
+      schedule: "0 * * * *"
+      
+    # 每天获取日线数据
+    - symbol: BTC/USDT
+      timeframe: 1d
+      days: 7
+      schedule: "0 0 * * *"
