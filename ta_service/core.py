@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import os
 from typing import Dict, Tuple, Any, Optional
 
 import pandas as pd
 import ccxt  # type: ignore
 import talib  # type: ignore
+
+BINANCE_IMPORT_ERROR: Optional[str] = None
+
+try:
+    from binance.client import Client  # type: ignore
+    try:
+        from binance.error import BinanceAPIException, BinanceRequestException  # type: ignore
+    except ImportError:
+        from binance.exceptions import BinanceAPIException, BinanceRequestException  # type: ignore
+except ImportError as exc:  # pragma: no cover - optional dependency
+    BINANCE_IMPORT_ERROR = str(exc)
+    Client = None  # type: ignore
+    BinanceAPIException = BinanceRequestException = Exception  # type: ignore
 
 
 # 支持的交易所列表（按优先级排序）
@@ -143,6 +157,92 @@ def fetch_data(
         f"建议: 检查网络连接、代理设置或尝试其他交易对"
     )
     raise Exception(error_msg)
+
+
+def _ratio_list_to_df(items: Any) -> pd.DataFrame:
+    """将 Binance 返回的比率列表转换为 DataFrame。"""
+    if not items:
+        return pd.DataFrame()
+    df = pd.DataFrame(items)
+    if df.empty:
+        return df
+
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce')
+
+    for col in df.columns:
+        if col in {'timestamp', 'symbol', 'period', 'interval'}:
+            continue
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    return df
+
+
+def fetch_binance_futures_ratios(
+    symbol: str,
+    period: str = "1h",
+    limit: int = 50,
+    proxies: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """获取 Binance 合约多空比数据。
+
+    返回包含多个 DataFrame（或字典）的字典。
+    """
+
+    if Client is None:
+        detail = f"python-binance 未安装或导入失败: {BINANCE_IMPORT_ERROR}" if BINANCE_IMPORT_ERROR else "python-binance 未安装"
+        raise ImportError(detail)
+
+    raw_symbol = symbol.replace('/', '').upper()
+
+    requests_params: Dict[str, Any] = {
+        'timeout': 15,
+    }
+    if proxies:
+        # 将代理透传给 python-binance 库（支持 http/https/socks）
+        requests_params['proxies'] = proxies
+
+    client = Client(
+        api_key=os.getenv('BINANCE_API_KEY'),
+        api_secret=os.getenv('BINANCE_API_SECRET'),
+        requests_params=requests_params,
+    )
+
+    try:
+        taker_ratio = client.futures_taker_longshort_ratio(
+            symbol=raw_symbol,
+            period=period,
+            limit=limit,
+        )
+        global_ratio = client.futures_global_longshort_ratio(
+            symbol=raw_symbol,
+            period=period,
+            limit=limit,
+        )
+        top_account_ratio = client.futures_top_longshort_account_ratio(
+            symbol=raw_symbol,
+            period=period,
+            limit=limit,
+        )
+        top_position_ratio = client.futures_top_longshort_position_ratio(
+            symbol=raw_symbol,
+            period=period,
+            limit=limit,
+        )
+        ticker = client.futures_ticker(symbol=raw_symbol)
+
+        return {
+            'taker_ratio': _ratio_list_to_df(taker_ratio),
+            'global_ratio': _ratio_list_to_df(global_ratio),
+            'top_account_ratio': _ratio_list_to_df(top_account_ratio),
+            'top_position_ratio': _ratio_list_to_df(top_position_ratio),
+            'ticker': ticker,
+        }
+
+    except (BinanceAPIException, BinanceRequestException) as exc:
+        raise Exception(f"Binance API 调用失败: {exc.message if hasattr(exc, 'message') else str(exc)}") from exc
+    except Exception as exc:  # 捕获其他异常
+        raise Exception(f"获取 Binance 多空数据失败: {str(exc)}") from exc
 
 
 def _sma(series: pd.Series, period: int) -> pd.Series:

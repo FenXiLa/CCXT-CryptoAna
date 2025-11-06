@@ -34,3 +34,5 @@ ipykernel
 TA-Lib
 streamlit
 plotly
+python-binance
+pysocks
