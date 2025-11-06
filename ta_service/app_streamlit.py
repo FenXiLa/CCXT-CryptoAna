@@ -463,15 +463,45 @@ def main():
     with st.expander("展开/折叠数据表"):
         st.dataframe(data.tail(200), use_container_width=True)
 
-    # 自动刷新逻辑
+    # 自动刷新逻辑（带倒计时）
     if enable_auto:
         if refresh_mode == "按周期":
             refresh_seconds = TIMEFRAME_SECONDS.get(timeframe, 60)
         else:
             refresh_seconds = int(custom_seconds)
-        st.caption(f"已启用自动刷新：{refresh_seconds} 秒后将刷新页面并获取最新 {timeframe} 数据…")
-        # 睡眠后重载页面
-        time.sleep(min(refresh_seconds, 3600))
+        
+        # 创建倒计时占位符（进度条和文本分开）
+        progress_placeholder = st.empty()
+        text_placeholder = st.empty()
+        
+        # 倒计时循环
+        remaining = min(refresh_seconds, 3600)  # 最多显示3600秒
+        while remaining > 0:
+            # 计算分钟和秒
+            mins = remaining // 60
+            secs = remaining % 60
+            
+            # 格式化倒计时显示
+            if mins > 0:
+                countdown_text = f"⏱️ 自动刷新倒计时: **{mins}分{secs}秒** 后获取最新 {timeframe} 数据"
+            else:
+                countdown_text = f"⏱️ 自动刷新倒计时: **{secs}秒** 后获取最新 {timeframe} 数据"
+            
+            # 更新进度条和文本
+            progress = 1.0 - (remaining / refresh_seconds)
+            progress_placeholder.progress(progress)
+            text_placeholder.caption(countdown_text)
+            
+            # 等待1秒
+            time.sleep(1)
+            remaining -= 1
+        
+        # 倒计时结束，清空占位符
+        progress_placeholder.empty()
+        text_placeholder.empty()
+        
+        # 倒计时结束，刷新页面
+        st.info("🔄 正在刷新数据...")
         try:
             st.experimental_rerun()  # 兼容旧版 streamlit
         except Exception:
