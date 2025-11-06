@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Dict, Tuple, Any, Optional
 
 import pandas as pd
@@ -8,20 +7,142 @@ import ccxt  # type: ignore
 import talib  # type: ignore
 
 
-def fetch_data(symbol: str, timeframe: str = "1m", limit: int = 599, proxies: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+# 支持的交易所列表（按优先级排序）
+SUPPORTED_EXCHANGES = [
+    'binance',
+    'okx',
+    'bybit',
+    'huobi',
+    'gate',
+    'kucoin',
+    'bitget',
+    'coinbase',
+    'kraken',
+]
+
+
+def _create_exchange(exchange_id: str, proxies: Optional[Dict[str, str]] = None) -> ccxt.Exchange:
     """
-    获取交易所K线数据（默认 Binance 现货）。
-    返回包含 ['Open','High','Low','Close','Volume'] 且以时间戳为索引的 DataFrame。
+    创建交易所实例
+    
+    参数:
+        exchange_id: 交易所ID（如 'binance', 'okx' 等）
+        proxies: 代理配置字典
+    
+    返回:
+        ccxt.Exchange 实例
     """
-    exchange = ccxt.binance({
+    exchange_class = getattr(ccxt, exchange_id)
+    config = {
         'proxies': proxies or {},
-        'options': {'defaultType': 'spot'}
-    })
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-    return df
+        'options': {'defaultType': 'spot'},
+        'enableRateLimit': True,  # 启用限流
+        'timeout': 30000,  # 30秒超时
+    }
+    return exchange_class(config)
+
+
+def fetch_data(
+    symbol: str,
+    timeframe: str = "1m",
+    limit: int = 599,
+    proxies: Optional[Dict[str, str]] = None,
+    exchange_id: Optional[str] = None,
+    auto_fallback: bool = True
+) -> Tuple[pd.DataFrame, str]:
+    """
+    获取交易所K线数据，支持异常处理和自动切换交易所。
+    
+    参数:
+        symbol: 交易对符号，如 'BTC/USDT'
+        timeframe: 时间周期，如 '1m', '1h', '1d' 等
+        limit: 获取的K线数量
+        proxies: 代理配置字典
+        exchange_id: 指定交易所ID，如果为None则自动选择
+        auto_fallback: 是否在失败时自动切换到其他交易所
+    
+    返回:
+        Tuple[pd.DataFrame, str]: (包含OHLCV数据的DataFrame, 实际使用的交易所ID)
+        如果所有交易所都失败，抛出异常
+    
+    异常:
+        Exception: 当所有交易所都无法获取数据时抛出
+    """
+    # 确定要尝试的交易所列表
+    if exchange_id:
+        # 如果指定了交易所，优先使用
+        exchange_list = [exchange_id]
+        if auto_fallback:
+            # 添加其他交易所作为备选
+            exchange_list.extend([e for e in SUPPORTED_EXCHANGES if e != exchange_id])
+    else:
+        # 未指定交易所，使用默认优先级列表
+        exchange_list = SUPPORTED_EXCHANGES.copy()
+    
+    last_error = None
+    last_exchange_id = None
+    
+    # 尝试每个交易所
+    for ex_id in exchange_list:
+        try:
+            # 创建交易所实例
+            exchange = _create_exchange(ex_id, proxies)
+            
+            # 尝试获取K线数据
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            
+            if not ohlcv or len(ohlcv) == 0:
+                raise Exception(f"交易所 {ex_id} 返回空数据")
+            
+            # 转换为DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+            # 成功返回
+            return df, ex_id
+            
+        except ccxt.ExchangeNotAvailable as e:
+            # 交易所不可用（如地区限制）
+            last_error = f"交易所 {ex_id} 不可用: {str(e)}"
+            last_exchange_id = ex_id
+            if not auto_fallback:
+                raise Exception(last_error)
+            continue
+            
+        except ccxt.NetworkError as e:
+            # 网络错误
+            last_error = f"交易所 {ex_id} 网络错误: {str(e)}"
+            last_exchange_id = ex_id
+            if not auto_fallback:
+                raise Exception(last_error)
+            continue
+            
+        except ccxt.ExchangeError as e:
+            # 交易所API错误
+            last_error = f"交易所 {ex_id} API错误: {str(e)}"
+            last_exchange_id = ex_id
+            if not auto_fallback:
+                raise Exception(last_error)
+            continue
+            
+        except Exception as e:
+            # 其他未知错误
+            last_error = f"交易所 {ex_id} 未知错误: {str(e)}"
+            last_exchange_id = ex_id
+            if not auto_fallback:
+                raise Exception(last_error)
+            continue
+    
+    # 所有交易所都失败了
+    error_msg = (
+        f"无法从任何交易所获取数据。\n"
+        f"最后尝试的交易所: {last_exchange_id}\n"
+        f"最后错误: {last_error}\n"
+        f"已尝试的交易所: {', '.join(exchange_list)}\n"
+        f"建议: 检查网络连接、代理设置或尝试其他交易对"
+    )
+    raise Exception(error_msg)
 
 
 def _sma(series: pd.Series, period: int) -> pd.Series:

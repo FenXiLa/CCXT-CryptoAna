@@ -12,7 +12,7 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ta_service.core import fetch_data, generate_signals, analyze_signals, summarize_latest
+from ta_service.core import fetch_data, generate_signals, analyze_signals, summarize_latest, SUPPORTED_EXCHANGES
 
 
 def _get_proxies() -> dict:
@@ -179,6 +179,25 @@ def main():
             index=list(TIMEFRAME_SECONDS.keys()).index('1h') if '1h' in TIMEFRAME_SECONDS else 5,
         )
         limit = st.slider("K线数量 (limit)", min_value=200, max_value=1500, value=600, step=50)
+        
+        st.divider()
+        st.subheader("交易所设置")
+        exchange_mode = st.radio(
+            "交易所选择",
+            ["自动选择（推荐）", "手动指定"],
+            index=0,
+            help="自动选择会在失败时自动切换到其他交易所"
+        )
+        selected_exchange = None
+        auto_fallback = True
+        if exchange_mode == "手动指定":
+            selected_exchange = st.selectbox(
+                "选择交易所",
+                options=SUPPORTED_EXCHANGES,
+                index=0,
+                help="如果选择的交易所不可用，将自动切换到其他交易所"
+            )
+        
         use_proxy = st.checkbox("使用环境代理 (HTTP_PROXY/HTTPS_PROXY)", value=True)
         st.divider()
         st.subheader("自动刷新")
@@ -195,9 +214,29 @@ def main():
 
     # 获取数据
     with st.spinner("获取数据中…"):
-        df = fetch_data(symbol, timeframe=timeframe, limit=limit, proxies=proxies)
-        if df.empty:
-            st.error("获取数据为空")
+        try:
+            df, used_exchange = fetch_data(
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=limit,
+                proxies=proxies,
+                exchange_id=selected_exchange,
+                auto_fallback=auto_fallback
+            )
+            
+            if df.empty:
+                st.error("获取数据为空")
+                st.stop()
+            
+            # 显示实际使用的交易所信息
+            if selected_exchange and used_exchange != selected_exchange:
+                st.warning(f"⚠️ 指定的交易所 {selected_exchange} 不可用，已自动切换到: **{used_exchange}**")
+            else:
+                st.success(f"✅ 数据来源: **{used_exchange}**")
+                
+        except Exception as e:
+            st.error(f"❌ 获取数据失败: {str(e)}")
+            st.info("💡 建议：\n1. 检查网络连接\n2. 尝试使用代理\n3. 尝试其他交易对\n4. 手动指定其他交易所")
             st.stop()
 
     # 价格与成交量（双Y轴图表）
@@ -252,19 +291,143 @@ def main():
     
     st.plotly_chart(fig, use_container_width=True)
 
-    # 计算指标与信号
+    # 计算指标与信号（需要在显示K线图之前计算）
     with st.spinner("计算指标与信号…"):
         data = generate_signals(df)
         sigs = analyze_signals(data)
         summary = summarize_latest(data, sigs)
+    
+    # 蜡烛图 + 布林带 + MACD 图表
+    st.subheader("K线图、布林带与 MACD")
+    
+    # 创建子图：上方是K线+布林带，下方是MACD
+    fig_ta = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        row_heights=[0.7, 0.3],
+        subplot_titles=(f'{symbol} K线图 + 布林带', 'MACD 指标'),
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # 第一行：K线图 + 布林带
+    # 添加蜡烛图
+    fig_ta.add_trace(
+        go.Candlestick(
+            x=data.index,
+            open=data['Open'],
+            high=data['High'],
+            low=data['Low'],
+            close=data['Close'],
+            name='K线',
+            increasing_line_color='#26a69a',  # 上涨绿色
+            decreasing_line_color='#ef5350',  # 下跌红色
+        ),
+        row=1, col=1
+    )
+    
+    # 添加布林带（先添加上轨，然后中轨，最后下轨并填充）
+    fig_ta.add_trace(
+        go.Scatter(
+            x=data.index,
+            y=data['bb_upper'],
+            name='布林带上轨',
+            line=dict(color='rgba(33, 150, 243, 0.4)', width=1, dash='dash'),
+            showlegend=True
+        ),
+        row=1, col=1
+    )
+    
+    fig_ta.add_trace(
+        go.Scatter(
+            x=data.index,
+            y=data['bb_lower'],
+            name='布林带下轨',
+            line=dict(color='rgba(33, 150, 243, 0.4)', width=1, dash='dash'),
+            fill='tonexty',  # 填充到上一条线（上轨）
+            fillcolor='rgba(33, 150, 243, 0.08)',
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+    
+    fig_ta.add_trace(
+        go.Scatter(
+            x=data.index,
+            y=data['bb_middle'],
+            name='布林带中轨',
+            line=dict(color='rgba(156, 39, 176, 0.7)', width=1.5),
+            showlegend=True
+        ),
+        row=1, col=1
+    )
+    
+    # 第二行：MACD 图
+    # MACD 线
+    fig_ta.add_trace(
+        go.Scatter(
+            x=data.index,
+            y=data['macd'],
+            name='MACD',
+            line=dict(color='#ff6f00', width=1.5),
+            showlegend=True
+        ),
+        row=2, col=1
+    )
+    
+    # MACD 信号线
+    fig_ta.add_trace(
+        go.Scatter(
+            x=data.index,
+            y=data['macd_signal'],
+            name='MACD Signal',
+            line=dict(color='#0277bd', width=1.5),
+            showlegend=True
+        ),
+        row=2, col=1
+    )
+    
+    # MACD 柱状图
+    colors_hist = ['#26a69a' if h >= 0 else '#ef5350' for h in data['macd_hist']]
+    fig_ta.add_trace(
+        go.Bar(
+            x=data.index,
+            y=data['macd_hist'],
+            name='MACD Hist',
+            marker_color=colors_hist,
+            opacity=0.6,
+            showlegend=True
+        ),
+        row=2, col=1
+    )
+    
+    # 添加零线（MACD 图）
+    fig_ta.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=2, col=1)
+    
+    # 更新布局
+    fig_ta.update_layout(
+        title=f"{symbol} 技术分析图表",
+        height=700,
+        hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="right", x=1),
+        xaxis_rangeslider_visible=False,  # 隐藏底部滑块
+    )
+    
+    # 更新Y轴标签
+    fig_ta.update_yaxes(title_text="价格", row=1, col=1)
+    fig_ta.update_yaxes(title_text="MACD", row=2, col=1)
+    fig_ta.update_xaxes(title_text="时间", row=2, col=1)
+    
+    st.plotly_chart(fig_ta, use_container_width=True)
 
     # 摘要指标
     st.subheader("综合摘要")
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("最新时间", str(summary['timestamp']))
-    s2.metric("当前价格", f"{summary['price']:.2f}")
-    s3.metric("信号强度", summary['signal_strength'])
-    s4.metric("建议", summary['recommendation'])
+    s1, s2, s3, s4, s5 = st.columns(5)
+    s1.metric("交易所", used_exchange.upper())
+    s2.metric("最新时间", str(summary['timestamp']))
+    s3.metric("当前价格", f"{summary['price']:.2f}")
+    s4.metric("信号强度", summary['signal_strength'])
+    s5.metric("建议", summary['recommendation'])
 
     # 最新信号表（带含义说明）
     st.subheader("信号一览（最新一行）")
